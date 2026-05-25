@@ -1,0 +1,16 @@
+# ── Compiled binaries ─────────────────────────────────────────────────────
+*.exe
+bridge
+bridge-linux
+bridge-macos
+
+# ── WhatsApp session data (private — never commit) ─────────────────────────
+.sysconfig/
+
+# ── Go build cache ────────────────────────────────────────────────────────
+/vendor/
+
+# ── OS junk ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini

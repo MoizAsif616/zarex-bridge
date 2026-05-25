@@ -1,0 +1,73 @@
+name: Build & Release Bridge
+
+on:
+  push:
+    tags:
+      - 'v*'          # triggers on: git tag v1.0.0 && git push origin v1.0.0
+  workflow_dispatch:  # also allows manual trigger from GitHub Actions UI
+
+permissions:
+  contents: write     # needed to create GitHub Releases and upload assets
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        include:
+          - name:   bridge.exe
+            goos:   windows
+            goarch: amd64
+
+          - name:   bridge-linux
+            goos:   linux
+            goarch: amd64
+
+          - name:   bridge-macos
+            goos:   darwin
+            goarch: arm64
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod   # reads the Go version from your go.mod
+
+      - name: Build binary
+        env:
+          GOOS:   ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0            # static binary — no libc dependency
+        run: go build -ldflags="-s -w" -o ${{ matrix.name }} .
+        # -s -w strips debug info → smaller binary (~30% size reduction)
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}
+
+  release:
+    name: Create GitHub Release
+    needs: build       # only runs after all 3 builds succeed
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true   # puts all 3 binaries in the current directory
+
+      - name: Create Release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            bridge.exe
+            bridge-linux
+            bridge-macos
+          generate_release_notes: true   # auto-generates changelog from commits
