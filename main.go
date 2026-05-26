@@ -32,6 +32,11 @@ type MessagePayload struct {
 	Text string `json:"text"`
 }
 
+type PresencePayload struct {
+	To    string `json:"to"`
+	State string `json:"state"`
+}
+
 func getMasterNumber() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -77,6 +82,63 @@ func eventHandler(evt interface{}) {
 			realSender = v.Info.SenderAlt.User
 		}
 
+		// Check for audio/voice message
+		audioMsg := v.Message.GetAudioMessage()
+		if audioMsg != nil {
+			fmt.Printf("[MSG] Sender: %s | RealNumber: %s | Audio Message detected\n",
+				v.Info.Sender.String(),
+				realSender,
+			)
+
+			if allowedNumber != "" && realSender != allowedNumber {
+				return
+			}
+
+			// Download and decrypt the audio media natively
+			data, err := client.Download(context.Background(), audioMsg)
+			if err != nil {
+				fmt.Println("[ERROR] Failed to download audio message:", err)
+				return
+			}
+
+			// Forward raw audio bytes to Python server
+			go func(sender string, audioBytes []byte) {
+				req, err := http.NewRequest("POST", "http://127.0.0.1:45050/whatsapp/incoming/audio", bytes.NewReader(audioBytes))
+				if err != nil {
+					fmt.Println("[ERROR] Failed to create HTTP request:", err)
+					return
+				}
+				req.Header.Set("Content-Type", "application/octet-stream")
+				req.Header.Set("X-Sender", sender)
+
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					fmt.Println("[ERROR] Failed to forward audio to Python:", err)
+					return
+				}
+				defer resp.Body.Close()
+
+				if resp.StatusCode != 200 {
+					fmt.Println("[WARN] Python server returned status for audio:", resp.StatusCode)
+				} else {
+					fmt.Println("[+] Forwarded audio to Python server successfully")
+					// Mark message as read ONLY on successful 200 OK delivery (ticks turn blue)
+					err = client.MarkRead(
+						context.Background(),
+						[]types.MessageID{v.Info.ID},
+						time.Now(),
+						v.Info.Chat,
+						v.Info.Sender,
+					)
+					if err != nil {
+						fmt.Println("[WARN] Could not mark audio as read:", err)
+					}
+				}
+			}(realSender, data)
+			return
+		}
+
+		// Text Message processing
 		msg := v.Message.GetConversation()
 		if msg == "" {
 			msg = v.Message.GetExtendedTextMessage().GetText()
@@ -95,18 +157,7 @@ func eventHandler(evt interface{}) {
 			return
 		}
 
-		err := client.MarkRead(
-			context.Background(),
-			[]types.MessageID{v.Info.ID},
-			time.Now(),
-			v.Info.Chat,
-			v.Info.Sender,
-		)
-		if err != nil {
-			fmt.Println("[WARN] Could not mark as read:", err)
-		}
-
-		// Forward to Python server
+		// Forward text to Python server
 		go func(sender, text string) {
 			payload := map[string]string{
 				"sender":  sender,
@@ -117,16 +168,28 @@ func eventHandler(evt interface{}) {
 				fmt.Println("[ERROR] Failed to marshal JSON:", err)
 				return
 			}
-			resp, err := http.Post("http://127.0.0.1:8000/whatsapp/incoming", "application/json", bytes.NewBuffer(jsonData))
+			resp, err := http.Post("http://127.0.0.1:45050/whatsapp/incoming/text", "application/json", bytes.NewBuffer(jsonData))
 			if err != nil {
-				fmt.Println("[ERROR] Failed to forward to Python:", err)
+				fmt.Println("[ERROR] Failed to forward text to Python:", err)
 				return
 			}
 			defer resp.Body.Close()
+
 			if resp.StatusCode != 200 {
-				fmt.Println("[WARN] Python server returned status:", resp.StatusCode)
+				fmt.Println("[WARN] Python server returned status for text:", resp.StatusCode)
 			} else {
-				fmt.Println("[+] Forwarded message to Python server")
+				fmt.Println("[+] Forwarded text message to Python server successfully")
+				// Mark message as read ONLY on successful 200 OK delivery (ticks turn blue)
+				err = client.MarkRead(
+					context.Background(),
+					[]types.MessageID{v.Info.ID},
+					time.Now(),
+					v.Info.Chat,
+					v.Info.Sender,
+				)
+				if err != nil {
+					fmt.Println("[WARN] Could not mark text as read:", err)
+				}
 			}
 		}(realSender, msg)
 	}
@@ -147,11 +210,47 @@ func sendHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JID format", http.StatusBadRequest)
 		return
 	}
+
+	// Auto-stop typing indicator when sending the response message
+	_ = client.SendChatPresence(context.Background(), jid, types.ChatPresencePaused, types.ChatPresenceMediaText)
+
 	client.SendMessage(context.Background(), jid, &waProto.Message{
 		Conversation: proto.String(payload.Text),
 	})
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"status":"sent"}`))
+}
+
+func presenceHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var payload PresencePayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	jid, ok := parseJID(payload.To)
+	if !ok {
+		http.Error(w, "invalid JID format", http.StatusBadRequest)
+		return
+	}
+
+	state := types.ChatPresencePaused
+	if payload.State == "composing" {
+		state = types.ChatPresenceComposing
+	}
+
+	err := client.SendChatPresence(context.Background(), jid, state, types.ChatPresenceMediaText)
+	if err != nil {
+		fmt.Println("[WARN] Failed to send chat presence:", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"success"}`))
 }
 
 func parseJID(s string) (types.JID, bool) {
@@ -232,8 +331,9 @@ func main() {
 	}
 
 	http.HandleFunc("/send", sendHandler)
-	fmt.Println("[+] HTTP bridge running on 127.0.0.1:8765")
-	if err := http.ListenAndServe("127.0.0.1:8765", nil); err != nil {
+	http.HandleFunc("/presence", presenceHandler)
+	fmt.Println("[+] HTTP bridge running on 127.0.0.1:45051")
+	if err := http.ListenAndServe("127.0.0.1:45051", nil); err != nil {
 		panic(err)
 	}
 }
