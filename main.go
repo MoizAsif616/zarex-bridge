@@ -261,6 +261,16 @@ func parseJID(s string) (types.JID, bool) {
 	return jid, true
 }
 
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if client != nil && client.IsConnected() {
+		w.Write([]byte(`{"status":"ready"}`))
+	} else {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"status":"not_ready"}`))
+	}
+}
+
 func main() {
 	allowedNumber = getMasterNumber()
 	if allowedNumber == "" {
@@ -330,6 +340,7 @@ func main() {
 
 	http.HandleFunc("/send", sendHandler)
 	http.HandleFunc("/presence", presenceHandler)
+	http.HandleFunc("/health", healthHandler)
 	fmt.Println("[+] HTTP bridge running on 127.0.0.1:45051")
 	if err := http.ListenAndServe("127.0.0.1:45051", nil); err != nil {
 		panic(err)
