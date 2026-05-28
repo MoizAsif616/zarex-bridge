@@ -366,6 +366,7 @@ func main() {
 	http.HandleFunc("/presence", presenceHandler)
 	http.HandleFunc("/health", healthHandler)
 	fmt.Println("[BRIDGE_READY]")
+	fmt.Println("[+] HTTP bridge running on 127.0.0.1:45051")
 	if err := http.ListenAndServe("127.0.0.1:45051", nil); err != nil {
 		panic(err)
 	}
