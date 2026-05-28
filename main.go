@@ -28,6 +28,15 @@ var client *whatsmeow.Client
 var allowedNumber string
 var pairedTime time.Time
 
+// noopLogger silences all whatsmeow library output.
+type noopLogger struct{}
+
+func (noopLogger) Debugf(string, ...interface{}) {}
+func (noopLogger) Infof(string, ...interface{})  {}
+func (noopLogger) Warnf(string, ...interface{})  {}
+func (noopLogger) Errorf(string, ...interface{}) {}
+func (noopLogger) Sub(string) waLog.Logger       { return noopLogger{} }
+
 type MessagePayload struct {
 	To   string `json:"to"`
 	Text string `json:"text"`
@@ -314,9 +323,9 @@ func main() {
 	}
 	dbPath := filepath.Join(zarexDir, "session.db")
 
-	logger := waLog.Stdout("Main", "ERROR", true)
+	logger := noopLogger{}
 
-	container, err := sqlstore.New(context.Background(), "sqlite", "file:"+dbPath+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)", waLog.Stdout("DB", "ERROR", true))
+	container, err := sqlstore.New(context.Background(), "sqlite", "file:"+dbPath+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)", noopLogger{})
 	if err != nil {
 		panic(err)
 	}
@@ -356,7 +365,7 @@ func main() {
 	http.HandleFunc("/send", sendHandler)
 	http.HandleFunc("/presence", presenceHandler)
 	http.HandleFunc("/health", healthHandler)
-	fmt.Println("[+] HTTP bridge running on 127.0.0.1:45051")
+	fmt.Println("[BRIDGE_READY]")
 	if err := http.ListenAndServe("127.0.0.1:45051", nil); err != nil {
 		panic(err)
 	}
