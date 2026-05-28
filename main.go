@@ -21,7 +21,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	_ "modernc.org/sqlite"
 
-	qrcode "github.com/skip2/go-qrcode"
+	qrterminal "github.com/mdp/qrterminal/v3"
 )
 
 var client *whatsmeow.Client
@@ -266,8 +266,6 @@ func main() {
 	if allowedNumber == "" {
 		fmt.Println("[CRITICAL] Master Phone Number is not set or empty in config.toml! This is mandatory. Exiting...")
 		os.Exit(1)
-	} else {
-		fmt.Println("[INFO] Loaded Master Phone Number:", allowedNumber)
 	}
 
 	// Instant crash-protection: exit immediately if parent process (Python) closes the stdin pipe
@@ -312,13 +310,13 @@ func main() {
 		}
 		for evt := range qrChan {
 			if evt.Event == "code" {
-				qrPath := filepath.Join(zarexDir, "qr.png")
-				err := qrcode.WriteFile(evt.Code, qrcode.Medium, 256, qrPath)
-				if err != nil {
-					fmt.Println("[WARN] Failed to write QR image file:", err)
-				} else {
-					fmt.Println("[QR_IMAGE_READY]")
-				}
+				qrterminal.GenerateWithConfig(evt.Code, qrterminal.Config{
+					Level:      qrterminal.L,
+					Writer:     os.Stdout,
+					HalfBlocks: true,
+					QuietZone:  1,
+				})
+				fmt.Println("[QR_IMAGE_READY]")
 			} else {
 				fmt.Println("QR event:", evt.Event)
 			}
