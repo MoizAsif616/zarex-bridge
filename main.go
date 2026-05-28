@@ -297,7 +297,7 @@ func main() {
 	}
 	dbPath := filepath.Join(zarexDir, "session.db")
 
-	logger := waLog.Stdout("Main", "INFO", true)
+	logger := waLog.Stdout("Main", "ERROR", true)
 
 	container, err := sqlstore.New(context.Background(), "sqlite", "file:"+dbPath+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)", waLog.Stdout("DB", "ERROR", true))
 	if err != nil {
@@ -327,15 +327,12 @@ func main() {
 					QuietZone:  1,
 				})
 				fmt.Println("[QR_IMAGE_READY]")
-			} else {
-				fmt.Println("QR event:", evt.Event)
 			}
 		}
 	} else {
 		if err := client.Connect(); err != nil {
 			panic(err)
 		}
-		fmt.Println("[+] Reconnected to WhatsApp")
 	}
 
 	http.HandleFunc("/send", sendHandler)
