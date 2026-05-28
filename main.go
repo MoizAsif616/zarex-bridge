@@ -263,7 +263,7 @@ func parseJID(s string) (types.JID, bool) {
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if client != nil && client.IsConnected() {
+	if client != nil && client.IsConnected() && client.IsLoggedIn() {
 		w.Write([]byte(`{"status":"ready"}`))
 	} else {
 		w.WriteHeader(http.StatusServiceUnavailable)
