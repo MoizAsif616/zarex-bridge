@@ -26,6 +26,7 @@ import (
 
 var client *whatsmeow.Client
 var allowedNumber string
+var pairedTime time.Time
 
 type MessagePayload struct {
 	To   string `json:"to"`
@@ -214,9 +215,19 @@ func sendHandler(w http.ResponseWriter, r *http.Request) {
 	// Auto-stop typing indicator when sending the response message
 	_ = client.SendChatPresence(context.Background(), jid, types.ChatPresencePaused, types.ChatPresenceMediaText)
 
-	client.SendMessage(context.Background(), jid, &waProto.Message{
+	// Send message with a 5-second context timeout to prevent hanging the HTTP handler
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := client.SendMessage(ctx, jid, &waProto.Message{
 		Conversation: proto.String(payload.Text),
 	})
+	if err != nil {
+		fmt.Println("[ERROR] Failed to send message via whatsmeow:", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"status":"sent"}`))
 }
@@ -264,6 +275,12 @@ func parseJID(s string) (types.JID, bool) {
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if client != nil && client.IsConnected() && client.IsLoggedIn() {
+		// Enforce a 10-second grace period immediately after pairing to let WhatsApp sessions initialize
+		if !pairedTime.IsZero() && time.Since(pairedTime) < 10*time.Second {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"status":"initializing_grace_period"}`))
+			return
+		}
 		w.Write([]byte(`{"status":"ready"}`))
 	} else {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -329,6 +346,7 @@ func main() {
 				fmt.Println("[QR_IMAGE_READY]")
 			}
 		}
+		pairedTime = time.Now()
 	} else {
 		if err := client.Connect(); err != nil {
 			panic(err)
